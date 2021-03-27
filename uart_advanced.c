@@ -9,6 +9,7 @@
 #include "hardware/uart.h"
 #include "hardware/irq.h"
 
+#include "ringbuffer.h"
 #include <stdio.h>
 
 /// \tag::uart_advanced[]
@@ -25,22 +26,86 @@
 #define UART_RX_PIN 1
 
 static int chars_rxed = 0;
+// -----------------------------------------------------------------------
+// Serial IO Ringbuffers.
+// TX and RX are relative to the Pico 
+// -----------------------------------------------------------------------
+#define RB_TX_SIZE 256 
+#define RB_RX_SIZE 256 
 
-// RX interrupt handler
-void on_uart_rx() {
+RINGBUF rb_tx;
+uint8_t rb_tx_buf[RB_TX_SIZE];
+
+RINGBUF rb_rx;
+uint8_t rb_rx_buf[RB_RX_SIZE];
+
+// -----------------------------------------------------------------------
+
+// System Call Stand-in.
+// Return the number of bytes available.
+// Its the job of the calling function to decide what to do and/or block.
+
+int __sapi_putc(uint8_t c) {
+  ringbuffer_addchar(&rb_tx, c);
+
+  // Enable the uart tx IRQ 
+  uart_set_irq_enables(UART_ID, true, true);
+  
+  return(ringbuffer_free(&rb_tx));
+  }
+
+int __sapi_puts(uint8_t *s) {
+  while(*s) __sapi_putc(*s++);
+  }
+
+// -----------------------------------------------------------------------
+// UART interrupt handler
+// -----------------------------------------------------------------------
+int count_uart_txed = 0;
+int count_uart_rxed = 0;
+
+void uart_handler() {
+  
+    // TX Handler.
+    if ( ringbuffer_used(&rb_tx) ) {
+      if ( uart_is_writable(UART_ID) ) {
+        uart_putc(UART_ID,ringbuffer_getchar(&rb_tx));
+        count_uart_txed++;
+      }
+      if ( ringbuffer_used(&rb_tx) == 0 ) {
+        // Turn off the TX IRQ 
+        // Now enable the UART to send interrupts - RX only
+        uart_set_irq_enables(UART_ID, true, false);
+      }
+      else { 
+        uart_set_irq_enables(UART_ID, true, true);
+      }
+  
+    }
+
+    // RX Handler
     while (uart_is_readable(UART_ID)) {
         uint8_t ch = uart_getc(UART_ID);
-        // Can we send it back?
-        if (uart_is_writable(UART_ID)) {
-            // Change it slightly first!
-            ch++;
-            uart_putc(UART_ID, ch);
-        }
-        chars_rxed++;
+        ringbuffer_addchar(&rb_rx, ch);
+        count_uart_rxed++;
     }
+    // 
+    // Tell somebody that there is data here.
+    // 
 }
 
+// -----------------------------------------------------------------------
+// -----------------------------------------------------------------------
+// -----------------------------------------------------------------------
+// -----------------------------------------------------------------------
 int main() {
+
+    char buf[40];
+  
+    // Initialize the UART ringbuffers. 
+    ringbuffer_init(&rb_tx,rb_tx_buf,sizeof(rb_tx_buf));
+    ringbuffer_init(&rb_rx,rb_rx_buf,sizeof(rb_rx_buf));
+
     // Set up our UART with a basic baud rate.
     uart_init(UART_ID, 2400);
 
@@ -63,13 +128,17 @@ int main() {
     // Turn off FIFO's - we want to do this character by character
     uart_set_fifo_enabled(UART_ID, false);
 
+    uart_puts(UART_ID, "\nHello, uart interrupts\n");
+    sprintf(buf, "rbused=%d\n", ringbuffer_used(&rb_rx));
+    uart_puts(UART_ID, buf);
+  
     // Set up a RX interrupt
     // We need to set up the handler first
     // Select correct interrupt for the UART we are using
     int UART_IRQ = UART_ID == uart0 ? UART0_IRQ : UART1_IRQ;
 
     // And set up and enable the interrupt handlers
-    irq_set_exclusive_handler(UART_IRQ, on_uart_rx);
+    irq_set_exclusive_handler(UART_IRQ, uart_handler);
     irq_set_enabled(UART_IRQ, true);
 
     // Now enable the UART to send interrupts - RX only
@@ -78,7 +147,6 @@ int main() {
     // OK, all set up.
     // Lets send a basic string out, and then run a loop and wait for RX interrupts
     // The handler will count them, but also reflect the incoming data back with a slight change!
-    uart_puts(UART_ID, "\nHello, uart interrupts\n");
 
     const uint LED_PIN = PICO_DEFAULT_LED_PIN;
     gpio_init(LED_PIN);
@@ -87,12 +155,12 @@ int main() {
     int count = 0;
     while (1) {
       char buf[40];
-      sprintf(buf, "Hello #%d\n", count++);
-      uart_puts(UART_ID, buf);
+      int uart_rxd = ringbuffer_used(&rb_rx);
+      sprintf(buf, "Hello #%d, %d %d \n", count++, count_uart_txed, count_uart_rxed);
+      __sapi_puts(buf);
       gpio_put(LED_PIN, count & 1);
       sleep_ms(500);
       }
-      
 }
 
 /// \end:uart_advanced[]
