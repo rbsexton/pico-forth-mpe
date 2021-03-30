@@ -41,21 +41,8 @@ uint8_t rb_rx_buf[RB_RX_SIZE];
 
 // -----------------------------------------------------------------------
 
-// System Call Stand-in.
-// Return the number of bytes available.
-// Its the job of the calling function to decide what to do and/or block.
-
-int __sapi_putc(uint8_t c) {
-  ringbuffer_addchar(&rb_tx, c);
-
-  // Enable the uart tx IRQ 
-  uart_set_irq_enables(UART_ID, true, true);
-  
-  return(ringbuffer_free(&rb_tx));
-  }
-
 int __sapi_puts(uint8_t *s) {
-  while(*s) __sapi_putc(*s++);
+  while(*s) SAPI_StreamPutChar(*s++);
   }
 
 // -----------------------------------------------------------------------

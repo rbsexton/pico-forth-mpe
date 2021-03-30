@@ -9,6 +9,10 @@ pico_sdk_init()
 add_executable(uart_advanced
     uart_advanced.c
     ringbuffer.c
+    svchandler-m0.s	
+    svchandler-table.s
+    systemcalls.c
+    app-api.c
 )
 
 
