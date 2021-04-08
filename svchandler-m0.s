@@ -68,23 +68,27 @@ isr_svcall:
 
   @ bkpt #0
 
-  @ Put R4 onto the stack so that it can become a scratch variable.
-  push { r4, lr }
-
-  @ Figure out which stack was in use.
+  @ Figure out which stack was in use.   Note that we have to capture 
+  @ the correct stack pointer before we push anything else onto the stack.
   movs r0, #4
   mov  r1, lr 
   tst  r0, r1
   beq  use_msp 
-  mrs  r4, psp
+  mrs  r0, psp
   b    done 
 
 use_msp: 
-  mrs  r4, msp 
+  mrs  r0, msp 
 
 done: 
 
-  ldr  r1, [r4,#24] @ Get the stacked PC
+  @ There is a copy of the original stack pointer.
+  @ Put R4 onto the stack so that it can become a scratch variable.
+  push { r4, lr }
+  
+  mov  r4, r0
+
+  ldr  r1, [r0,#24] @ Get the stacked PC
   subs r1, #2       @ Address of svc call instruction. 
   ldrb r1, [r1, #0] @ Extract the svc call number. M0 doesn't have neg offsets.
   lsls r1, r1, #2   @ Make this back into a table offset.
